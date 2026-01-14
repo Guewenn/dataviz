@@ -1,0 +1,1151 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SNCF DataViz : Tourisme Durable</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/@turf/turf/turf.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: 'Segoe UI', sans-serif; background-color: #f1f5f9; }
+        #map { height: 100%; width: 100%; z-index: 1; background: #cbd5e1; }
+        
+        #loader {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); z-index: 9999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            color: white; transition: opacity 0.5s; text-align: center;
+        }
+        .loader-tip { font-size: 1.1rem; color: #94a3b8; margin-top: 10px; height: 30px; font-style: italic; }
+        
+        .header-bar { position: absolute; top: 20px; right: 20px; z-index: 1000; display: flex; gap: 10px; }
+        .btn-context {
+            background: #1e293b; color: white; padding: 12px 24px; border-radius: 50px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3); font-weight: bold; cursor: pointer; font-size: 1rem;
+            transition: transform 0.2s; display: flex; align-items: center; gap: 10px; border: 2px solid white;
+        }
+        .btn-context:hover { transform: scale(1.05); background: #0055a4; }
+
+        .filter-bar {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            z-index: 2000;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 8px 12px; border-radius: 50px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            display: flex; gap: 8px; backdrop-filter: blur(4px); border: 1px solid #e2e8f0;
+        }
+        .filter-btn {
+            border: none; padding: 8px 16px; border-radius: 30px; font-size: 0.85rem; font-weight: 700;
+            cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 6px;
+            background: #f1f5f9; color: #64748b; border: 2px solid transparent;
+        }
+        .filter-btn:hover { background: #e2e8f0; }
+        .filter-btn.active[data-target="gares"] { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
+        .filter-btn.active[data-target="epv"] { background: #fffbeb; color: #d97706; border-color: #fde68a; }
+        .filter-btn.active[data-target="qualite"] { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
+        .filter-btn.active[data-target="tours"] { background: #fdf4ff; color: #c026d3; border-color: #f5d0fe; }
+
+        #layer-toast {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(100px);
+            background: rgba(15, 23, 42, 0.95); color: white;
+            padding: 12px 24px; border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2); z-index: 3000;
+            font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; gap: 10px;
+            border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(4px);
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s;
+            opacity: 0; pointer-events: none;
+        }
+        #layer-toast.visible { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+        .instruction-banner {
+            position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
+            background: white; padding: 10px 25px; border-radius: 30px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1); z-index: 1500;
+            font-weight: 600; color: #334155; border: 1px solid #cbd5e1;
+            display: flex; align-items: center; gap: 10px; font-size: 0.9rem;
+            animation: slideDown 1s ease-out;
+        }
+        @keyframes slideDown { from { top: -50px; opacity: 0; } to { top: 80px; opacity: 1; } }
+
+        .sidebar {
+            position: absolute; top: 20px; left: 20px; bottom: 20px; width: 450px;
+            background: white; border-radius: 20px; z-index: 1000;
+            box-shadow: 0 10px 40px -5px rgba(0, 0, 0, 0.3);
+            display: flex; flex-direction: column; overflow: hidden;
+            transition: transform 0.3s ease;
+        }
+        .sidebar-header { background: #1e293b; color: white; padding: 30px 30px 20px 30px; }
+        .sidebar-content { flex: 1; overflow-y: auto; padding: 25px; }
+
+        .stat-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 24px; margin-bottom: 24px; }
+        .badge { font-size: 0.75rem; font-weight: bold; padding: 6px 12px; border-radius: 12px; text-transform: uppercase; }
+        
+        .route-box {
+            background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
+            border: 2px dashed #3b82f6; border-radius: 16px; padding: 20px; margin-bottom: 24px;
+            animation: fadeIn 0.5s;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        .tab-btn { padding-bottom: 5px; border-bottom: 4px solid transparent; color: #94a3b8; font-weight: bold; cursor: pointer; transition: all 0.2s; font-size: 1.1rem; }
+        .tab-btn.active { border-bottom-color: #34d399; color: white; }
+        .tab-btn:hover:not(.active) { color: #cbd5e1; }
+        .hidden-tab { display: none; }
+        
+        #btn-crea.active { background-color: #10b981; color: white; border-color: #10b981; }
+
+        .btn-recenter {
+            position: absolute; bottom: 30px; left: 490px; z-index: 900;
+            background: white; padding: 12px 20px; border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1); cursor: pointer;
+            font-weight: bold; color: #334155; border: 1px solid #cbd5e1;
+            display: flex; align-items: center; gap: 8px; transition: all 0.2s; font-size: 1rem;
+        }
+        .btn-recenter:hover { background: #f8fafc; color: #0055a4; transform: scale(1.05); }
+
+        .map-legend {
+            position: absolute; bottom: 30px; right: 20px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.98); padding: 20px; border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            font-size: 0.9rem; border: 1px solid #e2e8f0;
+        }
+        .legend-item { display: flex; align-items: center; margin-bottom: 10px; color: #334155; font-weight: 600; }
+        .dot { width: 14px; height: 14px; border-radius: 50%; margin-right: 12px; display: inline-block; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .line { width: 25px; height: 5px; margin-right: 12px; display: inline-block; border-radius: 3px; }
+
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.85); z-index: 5000; backdrop-filter: blur(8px); justify-content: center; align-items: center; }
+        .modal-box { background: white; width: 900px; max-width: 95%; max-height: 90vh; border-radius: 24px; padding: 50px; overflow-y: auto; position: relative; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+        .close-modal { position: absolute; top: 25px; right: 30px; font-size: 2.5rem; cursor: pointer; color: #64748b; }
+        
+        .leaflet-popup-content-wrapper { border-radius: 12px; padding: 0; overflow: hidden; }
+        .leaflet-popup-content { margin: 0; width: 300px !important; }
+        .popup-header { padding: 12px 15px; color: white; font-weight: bold; font-size: 1rem; }
+        .popup-body { padding: 15px; font-size: 0.9rem; line-height: 1.5; }
+    </style>
+</head>
+<body>
+
+    <div id="loader">
+        <i class="fa-solid fa-train-subway fa-bounce text-8xl text-emerald-500 mb-6"></i>
+        <h2 class="text-4xl font-bold text-white mb-2">SNCF Data & Tourisme</h2>
+        
+        <div class="w-96 h-3 bg-slate-800 rounded-full mt-6 overflow-hidden border border-slate-700">
+            <div id="progress-bar" class="h-full bg-emerald-500 w-0 transition-all duration-300"></div>
+        </div>
+        <div id="loader-msg" class="loader-tip">Initialisation...</div>
+
+        <div class="mt-10 bg-slate-800/50 p-6 rounded-xl border border-slate-700 max-w-lg text-left backdrop-blur-sm">
+            <h3 class="text-emerald-400 font-bold text-lg mb-3"><i class="fa-solid fa-list-check mr-2"></i>Comment ça marche ?</h3>
+            <ul class="space-y-3 text-slate-300 text-sm">
+                <li class="flex items-start gap-3">
+                    <span class="bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">1</span>
+                    La carte va afficher toutes les gares (Points Bleus) et les sites touristiques (Points colorés).
+                </li>
+                <li class="flex items-start gap-3">
+                    <span class="bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">2</span>
+                    <strong>Cliquez sur une Gare</strong> pour zoomer et analyser l'offre touristique autour (15km).
+                </li>
+                <li class="flex items-start gap-3">
+                    <span class="bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">3</span>
+                    Cliquez sur les graphiques pour voir les détails (Ratio Piétons/Cyclistes, etc.).
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="filter-bar">
+        <button class="filter-btn active" onclick="toggleLayer('gares', this)" data-target="gares">
+            <i class="fa-solid fa-train"></i> Gares
+        </button>
+        <div class="w-px h-6 bg-slate-300 mx-1"></div>
+        <button class="filter-btn active" onclick="toggleLayer('epv', this)" data-target="epv">
+            <i class="fa-solid fa-gem"></i> Artisans
+        </button>
+        <button class="filter-btn active" onclick="toggleLayer('qualite', this)" data-target="qualite">
+            <i class="fa-solid fa-star"></i> Qualité
+        </button>
+        <button class="filter-btn active" onclick="toggleLayer('tours', this)" data-target="tours">
+            <i class="fa-solid fa-person-hiking"></i> Balades
+        </button>
+    </div>
+
+    <div id="layer-toast">
+        <i class="fa-solid fa-circle-info text-blue-400 text-lg"></i>
+        <span id="toast-text">Message d'information</span>
+    </div>
+
+    <div class="instruction-banner">
+        <i class="fa-solid fa-arrow-pointer text-blue-500 text-xl fa-bounce"></i>
+        <span>Cliquez sur une <strong>Gare (Point Bleu)</strong> pour lancer l'analyse locale.</span>
+    </div>
+
+    <button class="btn-recenter" onclick="resetMapToFrance()">
+        <i class="fa-solid fa-expand text-blue-600"></i>
+        Recentrer France
+    </button>
+
+    <div class="map-legend">
+        <div class="legend-item"><span class="dot bg-blue-600" style="width:18px;height:18px;"></span> Gare Hub (TGV)</div>
+        <div class="legend-item"><span class="dot bg-blue-400"></span> Gare Régionale</div>
+        <div class="legend-item"><span class="dot bg-amber-500"></span> Patrimoine Vivant (EPV)</div>
+        <div class="legend-item"><span class="dot bg-red-500"></span> Qualité Tourisme</div>
+        <div class="legend-item"><span class="dot bg-fuchsia-500"></span> Balade / Rando</div>
+        <div class="legend-item"><span class="line bg-emerald-500"></span> Piste Cyclable</div>
+    </div>
+
+    <div class="header-bar">
+        <button class="btn-context" onclick="openContext()">
+            <i class="fa-solid fa-circle-question text-xl text-blue-300"></i>
+            <span>À propos & Aide</span>
+        </button>
+    </div>
+
+    <div class="sidebar" id="sidebar-panel">
+        <div class="sidebar-header">
+            <h1 class="text-3xl font-black flex items-center gap-3 mb-6">
+                <i class="fa-solid fa-train text-emerald-400"></i> SNCF DATA
+            </h1>
+            
+            <div class="flex items-end justify-between border-b border-slate-700/50 pb-2">
+                <div class="flex gap-6">
+                    <div class="tab-btn active" onclick="switchTab('global', this)">Vue Globale</div>
+                    <div class="tab-btn" onclick="switchTab('pepites', this)">Les Pépites</div>
+                </div>
+                
+                <button id="btn-crea" onclick="toggleCreaLayer(this)" class="mb-1 text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-full hover:bg-emerald-500 hover:text-white transition flex items-center gap-2 group">
+                    <i class="fa-solid fa-palette group-hover:rotate-12 transition"></i> Superposer Créa
+                </button>
+            </div>
+        </div>
+
+        <div class="sidebar-content">
+            <div id="tab-global">
+                <div class="flex gap-4 mb-8">
+                    <div class="flex-1 bg-blue-50 p-5 rounded-2xl border border-blue-100 text-center shadow-sm">
+                        <div class="text-4xl font-black text-blue-700 mb-1" id="total-gares">0</div>
+                        <div class="text-sm font-bold text-blue-500 uppercase tracking-wide">Gares</div>
+                    </div>
+                    <div class="flex-1 bg-amber-50 p-5 rounded-2xl border border-amber-100 text-center shadow-sm">
+                        <div class="text-4xl font-black text-amber-600 mb-1" id="total-tourisme">0</div>
+                        <div class="text-sm font-bold text-amber-500 uppercase tracking-wide">Sites</div>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <h3 class="text-sm font-bold text-slate-500 uppercase mb-4 flex justify-between items-center">
+                        <span>Répartition des Gares</span>
+                        <i class="fa-solid fa-chart-pie text-lg"></i>
+                    </h3>
+                    <div class="h-56">
+                        <canvas id="chartGlobalGares"></canvas>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <h3 class="text-sm font-bold text-slate-500 uppercase mb-4 flex justify-between items-center">
+                        <span>Top Régions (Densité)</span>
+                        <i class="fa-solid fa-chart-simple text-lg"></i>
+                    </h3>
+                    <div class="h-56">
+                        <canvas id="chartGlobalRegions"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-pepites" class="hidden-tab">
+                <div class="bg-purple-50 p-5 rounded-2xl border border-purple-100 mb-6">
+                    <h3 class="font-bold text-purple-900 mb-2 text-lg"><i class="fa-solid fa-wand-magic-sparkles mr-2"></i>Nos recommandations</h3>
+                    <p class="text-sm text-purple-700">Ces gares sont des "Pépites" : elles combinent une gare accessible et une forte densité de sites touristiques à proximité.</p>
+                </div>
+                <div id="top-list-container"></div>
+            </div>
+
+            <div id="view-detail" class="hidden">
+                <button onclick="resetView()" class="mb-6 text-sm font-bold text-slate-500 hover:text-blue-600 flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full w-fit transition border border-slate-200">
+                    <i class="fa-solid fa-arrow-left"></i> Retour carte
+                </button>
+
+                <h2 id="d-nom" class="text-4xl font-black text-slate-800 leading-tight mb-2">Gare</h2>
+                <div class="flex gap-2 mb-6">
+                    <span id="d-seg" class="badge bg-blue-100 text-blue-800 border border-blue-200">Segment A</span>
+                    <span id="d-score" class="badge bg-purple-100 text-purple-800 border border-purple-200 hidden"><i class="fa-solid fa-star mr-1"></i>Pépite</span>
+                </div>
+
+                <div id="stats-panel" class="bg-white border-l-4 border-indigo-500 p-5 rounded-r-xl mb-6 shadow-sm hidden">
+                    <div class="flex items-center gap-2 mb-4">
+                        <i class="fa-solid fa-bullseye text-indigo-600 text-xl"></i>
+                        <strong class="text-indigo-900 text-lg">Accessibilité des sites</strong>
+                    </div>
+                    <div class="grid grid-cols-2 gap-6 mb-4">
+                        <div>
+                            <div class="text-slate-500 text-xs font-bold uppercase mb-1">Distance Typique</div>
+                            <div class="text-2xl font-black text-slate-800"><span id="stat-median">--</span> km</div>
+                            <p class="text-xs text-slate-400 mt-1">Moyenne sans les extrêmes.</p>
+                        </div>
+                        <div>
+                            <div class="text-slate-500 text-xs font-bold uppercase mb-1">Dispersion</div>
+                            <div class="text-2xl font-black text-slate-800"><span id="stat-std">--</span> km</div>
+                            <p class="text-xs text-slate-400 mt-1">Regroupé ou éparpillé ?</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="route-panel" class="hidden route-box">
+                    <h3 class="text-base font-bold text-blue-900 uppercase mb-3 flex items-center">
+                        <i class="fa-solid fa-route mr-2"></i> Itinéraire Vélo
+                    </h3>
+                    <div class="text-sm text-slate-500 mb-3">Vers : <strong id="route-dest" class="text-slate-900">...</strong></div>
+                    
+                    <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-blue-100 shadow-sm">
+                        <div class="text-center">
+                            <i class="fa-solid fa-bicycle text-3xl text-emerald-500 mb-1"></i>
+                            <div class="font-bold text-slate-800 text-lg" id="time-velo">-- min</div>
+                        </div>
+                        <div class="h-10 w-px bg-gray-200"></div>
+                        <div class="text-center">
+                            <div class="text-xs font-bold text-gray-400 mb-1">DISTANCE</div>
+                            <div class="font-black text-blue-600 text-2xl" id="route-dist">-- km</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="route-placeholder" class="bg-blue-50 border border-blue-200 rounded-xl p-5 mb-6 text-blue-800 flex items-start gap-3">
+                    <i class="fa-solid fa-location-dot mt-1 text-xl fa-bounce"></i>
+                    <div>
+                        <strong class="block mb-1">Calculez votre itinéraire</strong>
+                        <span class="text-sm text-blue-700">Cliquez sur un site touristique (point coloré) sur la carte pour tracer le chemin cyclable.</span>
+                    </div>
+                </div>
+
+                <div class="stat-card border-l-4 border-amber-500 relative">
+                    <h3 class="text-sm font-bold text-slate-500 uppercase mb-4 flex justify-between">
+                        <span><i class="fa-solid fa-camera text-amber-500 mr-2"></i> Offre Touristique</span>
+                        <span class="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded border">Interactif <i class="fa-solid fa-hand-pointer ml-1"></i></span>
+                    </h3>
+                    
+                    <button id="btn-reset-filter" onclick="resetLocalFilter()" class="hidden absolute top-4 right-4 bg-slate-200 hover:bg-slate-300 text-slate-600 text-xs px-2 py-1 rounded transition z-50 font-bold border border-slate-300">
+                        <i class="fa-solid fa-rotate-left mr-1"></i> Tout réafficher
+                    </button>
+
+                    <div class="h-48 mb-6">
+                        <canvas id="chartLocalPie"></canvas>
+                    </div>
+                    <h4 id="bar-title" class="text-xs font-bold text-slate-400 uppercase mb-2 border-t pt-3">Détail des activités</h4>
+                    <div class="h-40">
+                        <canvas id="chartLocalBar"></canvas>
+                    </div>
+                </div>
+
+                <div class="stat-card border-l-4 border-emerald-500 bg-emerald-50/30">
+                    <div class="flex justify-between items-center mb-2">
+                         <h3 class="text-sm font-bold text-emerald-800 uppercase flex items-center">
+                            <i class="fa-solid fa-bicycle mr-2"></i> Cyclabilité
+                        </h3>
+                        <span id="d-velo-km" class="bg-emerald-200 text-emerald-900 px-3 py-1 rounded-lg font-bold text-sm">0 km</span>
+                    </div>
+                    <p class="text-sm text-emerald-700">de pistes cyclables cartographiées autour de la gare.</p>
+                </div>
+
+                <div class="stat-card">
+                    <h3 class="text-sm font-bold text-slate-500 uppercase mb-4">
+                        <i class="fa-regular fa-clock mr-2"></i> Prochains Trains
+                    </h3>
+                    <ul id="d-api-list" class="space-y-3 text-sm font-mono text-slate-600">
+                        <li class="text-gray-400 italic">Connexion SNCF API...</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-context">
+        <div class="modal-box">
+            <span class="close-modal" onclick="closeContext()">&times;</span>
+            <div class="flex items-center gap-4 mb-8">
+                <div class="bg-blue-100 p-4 rounded-full">
+                    <i class="fa-solid fa-train text-3xl text-blue-600"></i>
+                </div>
+                <div>
+                    <h2 class="text-3xl font-black text-slate-800">Le Train : Clé du Tourisme Durable</h2>
+                    <p class="text-slate-500 text-lg">Comment valoriser le territoire sans voiture ?</p>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-12">
+                <div>
+                    <h3 class="text-xl font-bold text-blue-600 mb-4">Notre Mission</h3>
+                    <p class="text-slate-600 mb-6 text-base leading-relaxed">
+                        Cet outil croise les données ferroviaires avec les richesses culturelles pour prouver qu'on peut voyager autrement.
+                    </p>
+                    <ul class="list-none text-slate-600 text-base space-y-4">
+                        <li class="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                            <strong><i class="fa-solid fa-arrows-to-circle text-blue-500 mr-2"></i>Accessibilité :</strong> Analyse des derniers kilomètres.
+                        </li>
+                        <li class="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                             <strong><i class="fa-solid fa-bicycle text-emerald-500 mr-2"></i>Intermodalité :</strong> Cartographie vélo.
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="bg-slate-50 p-8 rounded-2xl border border-slate-200">
+                    <h3 class="text-xl font-bold text-slate-800 mb-6">Légende & Données</h3>
+                    <div class="space-y-6">
+                        <div class="flex gap-4"><div class="mt-1 flex-shrink-0"><span class="dot bg-amber-500 w-6 h-6"></span></div><div><strong class="text-amber-700">Patrimoine Vivant (EPV)</strong><p class="text-sm text-slate-600">Excellence du savoir-faire français.</p></div></div>
+                        <div class="flex gap-4"><div class="mt-1 flex-shrink-0"><span class="dot bg-red-500 w-6 h-6"></span></div><div><strong class="text-red-700">Qualité Tourisme™</strong><p class="text-sm text-slate-600">Label d'État garantissant l'accueil.</p></div></div>
+                        <div class="flex gap-4"><div class="mt-1 flex-shrink-0"><span class="dot bg-fuchsia-500 w-6 h-6"></span></div><div><strong class="text-fuchsia-700">Itinéraires</strong><p class="text-sm text-slate-600">Randonnées et balades.</p></div></div>
+                    </div>
+
+                    <div class="mt-8 pt-6 border-t border-slate-200">
+                        <h4 class="text-sm font-bold text-slate-500 uppercase mb-3"><i class="fa-solid fa-palette mr-2"></i> Kit Créatif</h4>
+                        <div class="flex gap-3">
+                            <a href="crea.png" download class="flex items-center justify-center gap-2 flex-1 bg-white border border-slate-300 py-2 rounded-lg text-slate-700 font-bold text-sm hover:border-blue-400 hover:text-blue-600 transition shadow-sm">
+                                <i class="fa-regular fa-image"></i> PNG
+                            </a>
+                            <a href="crea.ai" download class="flex items-center justify-center gap-2 flex-1 bg-white border border-slate-300 py-2 rounded-lg text-slate-700 font-bold text-sm hover:border-orange-400 hover:text-orange-600 transition shadow-sm">
+                                <i class="fa-solid fa-pen-nib"></i> AI
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-10 pt-8 border-t border-slate-200 text-center">
+                <button onclick="closeContext()" class="bg-blue-600 text-white px-10 py-4 rounded-full font-bold text-lg hover:bg-blue-700 transition shadow-lg">
+                    J'ai compris, accéder à la Carte
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        const SNCF_KEY = 'a16b045e-05da-431d-92b8-bd8fed20bf0c';
+        
+        const DB = { gares: [], epv: [], qualite: [], tours: [], velo: null };
+        
+        let map, layers = { 
+            gares: null, epv: null, qualite: null, tours: null, velo: null, circles: null, route: null, crea: null
+        };
+        let charts = { globalGares: null, globalReg: null, localPie: null, localBar: null };
+        let activeGare = null;
+        let currentLocalData = null;
+        let isFiltered = false; // Etat du filtrage local
+
+        const layerDescriptions = {
+            'gares': "Le réseau ferré : Hubs TGV, gares régionales et haltes locales.",
+            'epv': "Entreprises du Patrimoine Vivant : L'excellence des savoir-faire artisanaux et industriels.",
+            'qualite': "Qualité Tourisme™ : Sites labellisés par l'État pour leur accueil.",
+            'tours': "Circuits : Boucles de randonnées pédestres et balades touristiques."
+        };
+
+        const loadingTips = [
+            "Chargement des 3000 gares françaises...",
+            "Localisation des artisans d'art...",
+            "Analyse des pistes cyclables...",
+            "Calcul des distances à vol d'oiseau...",
+            "Préparation de la visualisation..."
+        ];
+
+        async function init() {
+            let tipIndex = 0;
+            const tipInterval = setInterval(() => {
+                tipIndex = (tipIndex + 1) % loadingTips.length;
+                document.getElementById('loader-msg').innerText = loadingTips[tipIndex];
+            }, 1200);
+
+            const updateLog = (pct) => { document.getElementById('progress-bar').style.width = pct + '%'; };
+
+            try {
+                updateLog(10);
+                DB.gares = await fetchClean('gares2.json');
+
+                updateLog(30);
+                DB.epv = await fetchClean('entreprises-du-patrimoine-vivant-epv.json');
+
+                updateLog(50);
+                try {
+                    const r = await fetch('etablissements-labellises-qualite-tourisme.json');
+                    if(r.ok) { DB.qualite = JSON.parse(repairJSON(await r.text())); }
+                } catch(e) {}
+
+                updateLog(70);
+                try {
+                    const rTours = await fetch('datatourisme-tour.csv');
+                    if(rTours.ok) { DB.tours = parseCSV(await rTours.text()); }
+                } catch(e) {}
+
+                updateLog(85);
+                try {
+                    const r = await fetch('france.geojson');
+                    if(r.ok) DB.velo = await r.json();
+                } catch(e) {}
+
+                updateLog(95);
+                calculateTourismScores();
+
+                updateLog(100);
+                clearInterval(tipInterval);
+                document.getElementById('loader-msg').innerText = "Prêt !";
+                
+                document.getElementById('total-gares').innerText = DB.gares.length;
+                document.getElementById('total-tourisme').innerText = DB.epv.length + DB.qualite.length + DB.tours.length;
+
+                initMap();
+                initGlobalCharts();
+
+                setTimeout(() => document.getElementById('loader').style.opacity = '0', 500);
+                setTimeout(() => document.getElementById('loader').style.display = 'none', 1000);
+
+            } catch (err) { 
+                clearInterval(tipInterval);
+                alert("Erreur critique: " + err.message); 
+            }
+        }
+
+        function reloadGlobalData() {
+            layers.epv.clearLayers();
+            layers.qualite.clearLayers();
+            layers.tours.clearLayers();
+            
+            DB.epv.forEach(e => addPoint(e, '#f59e0b', 'EPV', e.raison_sociale, e.univers, layers.epv));
+            DB.qualite.forEach(q => addPoint(q, '#ef4444', 'Qualité Tourisme', q.nom_du_professionnel, q.activite_du_professionnel, layers.qualite));
+            DB.tours.forEach(t => {
+                const pointObj = { coordonnees_geographiques: { lat: t.Latitude, lon: t.Longitude } };
+                addPoint(pointObj, '#d946ef', 'Balade', t.Nom_du_POI, t.Description.substring(0, 100) + "...", layers.tours);
+            });
+        }
+
+        function toggleCreaLayer(btn) {
+            const latMax = 51.80;
+            const latMin = 41.20;
+            const lonMin = -11.5;
+            const lonMax = 14.5;
+            const franceBounds = [[latMax, lonMin], [latMin, lonMax]]; 
+            
+            const dataLayers = ['gares', 'epv', 'qualite', 'tours', 'velo', 'circles', 'route'];
+
+            if(!layers.crea) {
+                layers.crea = L.imageOverlay('crea.png', franceBounds, { 
+                    opacity: 1,
+                    interactive: false,
+                    zIndex: 10000
+                });
+            }
+
+            if(map.hasLayer(layers.crea)) {
+                map.removeLayer(layers.crea);
+                btn.classList.remove('active');
+
+                document.querySelectorAll('.filter-btn.active').forEach(b => {
+                    const target = b.getAttribute('data-target');
+                    if(layers[target]) map.addLayer(layers[target]);
+                });
+
+                if (activeGare) {
+                    if (layers.circles.getLayers().length > 0) map.addLayer(layers.circles);
+                    if (layers.velo.getLayers().length > 0) map.addLayer(layers.velo);
+                    if (layers.route.getLayers().length > 0) map.addLayer(layers.route);
+                    if (!isFiltered) reloadGlobalData(); // Si pas filtré, on remet tout
+                } else {
+                    reloadGlobalData();
+                }
+
+            } else {
+                dataLayers.forEach(key => {
+                    if(layers[key] && map.hasLayer(layers[key])) {
+                        map.removeLayer(layers[key]);
+                    }
+                });
+                map.closePopup();
+
+                layers.crea.addTo(map);
+                map.fitBounds(franceBounds); 
+                btn.classList.add('active');
+                showToast("Mode Créa : Vision artistique activée");
+            }
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('layer-toast');
+            document.getElementById('toast-text').innerText = message;
+            toast.classList.add('visible');
+            
+            if(window.toastTimeout) clearTimeout(window.toastTimeout);
+            window.toastTimeout = setTimeout(() => {
+                toast.classList.remove('visible');
+            }, 4000);
+        }
+
+        window.toggleLayer = (type, btn) => {
+            if (map.hasLayer(layers[type])) {
+                map.removeLayer(layers[type]);
+                btn.classList.remove('active');
+            } else {
+                map.addLayer(layers[type]);
+                btn.classList.add('active');
+                if(layerDescriptions[type]) showToast(layerDescriptions[type]);
+            }
+        };
+
+        function parseCSV(text) {
+            const result = [];
+            const lines = text.trim().split(/\r?\n/);
+            for (let i = 1; i < lines.length; i++) {
+                const line = lines[i]; if (!line) continue;
+                const row = []; let inQuote = false; let start = 0;
+                for (let c = 0; c < line.length; c++) {
+                    if (line[c] === '"') { inQuote = !inQuote; }
+                    else if (line[c] === ',' && !inQuote) {
+                        let val = line.substring(start, c).trim();
+                        if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+                        val = val.replace(/""/g, '"'); row.push(val); start = c + 1;
+                    }
+                }
+                let val = line.substring(start).trim();
+                if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+                row.push(val);
+
+                if (row.length > 3) {
+                    const lat = parseFloat(row[2]); const lon = parseFloat(row[3]);
+                    if (!isNaN(lat) && !isNaN(lon)) {
+                        result.push({
+                            Nom_du_POI: row[0], Latitude: lat, Longitude: lon, Description: row[12] || "Non spécifié"
+                        });
+                    }
+                }
+            }
+            return result;
+        }
+
+        async function fetchClean(url) {
+            const r = await fetch(url);
+            const t = await r.text();
+            return JSON.parse(repairJSON(t));
+        }
+
+        function repairJSON(txt) {
+            let t = txt.trim().replace(/}\s*{/g, '},{');
+            if(!t.startsWith('[')) t = '[' + t;
+            if(!t.endsWith(']')) t = t + ']';
+            return t;
+        }
+
+        function switchTab(tabName, btn) {
+            if(btn) {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            }
+            if(tabName === 'global') {
+                document.getElementById('tab-global').style.display = 'block';
+                document.getElementById('tab-pepites').style.display = 'none';
+                document.getElementById('view-detail').style.display = 'none';
+                activeGare = null;
+                resetView();
+                reloadGlobalData();
+            } else if(tabName === 'pepites') {
+                document.getElementById('tab-global').style.display = 'none';
+                document.getElementById('tab-pepites').style.display = 'block';
+                document.getElementById('view-detail').style.display = 'none';
+                activeGare = null;
+                resetView();
+                reloadGlobalData();
+            }
+        }
+
+        function calculateTourismScores() {
+            const garesWithScore = [];
+            DB.gares.forEach(g => {
+                if(!g.position_geographique) return;
+                const ptGare = turf.point([g.position_geographique.lon, g.position_geographique.lat]);
+                let sitesCount = 0;
+                
+                const check = (latItem, lonItem) => {
+                    if(Math.abs(latItem - g.position_geographique.lat) < 0.15 && Math.abs(lonItem - g.position_geographique.lon) < 0.15) {
+                         if(turf.distance(ptGare, turf.point([lonItem, latItem])) < 10) sitesCount++;
+                    }
+                };
+
+                DB.epv.forEach(e => { const c = getCoord(e); if(c) check(c[0], c[1]); });
+                DB.tours.forEach(t => { check(t.Latitude, t.Longitude); });
+
+                const bonus = (g.segment_drg === 'c' || g.segment_drg === 'C') ? 5 : 0;
+                if(sitesCount > 0) {
+                    g.tourismScore = (sitesCount * 3) + bonus;
+                    g.nbSitesProx = sitesCount;
+                    garesWithScore.push(g);
+                }
+            });
+
+            const topList = garesWithScore.sort((a,b) => b.tourismScore - a.tourismScore).slice(0, 15);
+            const container = document.getElementById('top-list-container');
+            let html = `<ul class="space-y-3">`;
+            topList.forEach((g, idx) => {
+                html += `
+                    <li class="cursor-pointer bg-white hover:bg-slate-50 border border-slate-200 p-4 rounded-xl transition flex justify-between items-center shadow-sm group" 
+                        onclick='forceSelectGare("${g.code_uic}")'>
+                        <div class="flex items-center gap-3">
+                            <span class="bg-slate-200 text-slate-600 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">${idx+1}</span>
+                            <div>
+                                <span class="font-bold text-slate-800 text-base group-hover:text-blue-600 transition">${g.nom}</span>
+                                <div class="text-xs text-gray-500 font-medium">${g.nbSitesProx} sites touristiques</div>
+                            </div>
+                        </div>
+                        <div class="font-black text-purple-600 text-lg bg-purple-50 px-2 py-1 rounded">${g.tourismScore}</div>
+                    </li>`;
+            });
+            container.innerHTML = html + `</ul>`;
+        }
+
+        window.forceSelectGare = (uic) => {
+            const g = DB.gares.find(x => x.code_uic === uic);
+            if(g) selectGare(g);
+        };
+
+        function initMap() {
+            const bounds = L.latLngBounds(L.latLng(41, -6), L.latLng(52, 10));
+
+            map = L.map('map', { 
+                zoomControl: false, preferCanvas: true, minZoom: 5, maxBounds: bounds, maxBoundsViscosity: 0.8
+            }).setView([46.7, 2.4], 6);
+
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+
+            layers.velo = L.geoJSON(null, { style: { color: '#10b981', weight: 4, opacity: 0.8 } }).addTo(map);
+            layers.circles = L.layerGroup().addTo(map);
+            layers.route = L.layerGroup().addTo(map);
+            
+            layers.epv = L.layerGroup().addTo(map);
+            layers.qualite = L.layerGroup().addTo(map);
+            layers.tours = L.layerGroup().addTo(map);
+            layers.gares = L.layerGroup().addTo(map);
+
+            reloadGlobalData();
+
+            DB.gares.forEach(g => {
+                if(g.position_geographique) {
+                    let radius = 4;
+                    if(g.segment_drg === 'A') radius = 8;
+                    else if(g.segment_drg === 'B') radius = 6;
+                    
+                    const m = L.circleMarker([g.position_geographique.lat, g.position_geographique.lon], {
+                        radius: radius, color: 'white', weight: 1, fillColor: '#2563eb', fillOpacity: 0.9
+                    }).on('click', () => selectGare(g));
+                    layers.gares.addLayer(m);
+                }
+            });
+        }
+
+        function resetMapToFrance() {
+             resetView();
+             reloadGlobalData(); 
+             map.flyTo([46.7, 2.4], 6);
+        }
+
+        function addPoint(obj, color, label, title, subtitle, layerGroup) {
+            const c = getCoord(obj);
+            if(c) {
+                const m = L.circleMarker(c, { radius: 6, color: 'white', weight: 1, fillColor: color, fillOpacity: 0.8 });
+                m.dataParams = { lat: c[0], lon: c[1], name: title };
+                m.on('click', (e) => {
+                    if(activeGare) {
+                        calculateRouteReal(m.dataParams);
+                    } else {
+                        let content = `
+                            <div class="popup-header" style="background:${color}">${label}</div>
+                            <div class="popup-body">
+                                <strong class="text-base text-slate-800 block mb-1">${title}</strong>
+                                <span class="text-slate-600">${subtitle || ''}</span>
+                                <div class="bg-slate-100 p-2 rounded mt-3 text-xs text-slate-500 flex gap-2 items-center">
+                                    <i class="fa-solid fa-circle-info"></i>
+                                    Sélectionnez une gare d'abord pour calculer l'itinéraire.
+                                </div>
+                            </div>`;
+                        L.popup().setLatLng(e.latlng).setContent(content).openOn(map);
+                    }
+                });
+                layerGroup.addLayer(m);
+            }
+        }
+
+        function selectGare(gare) {
+            activeGare = gare;
+            
+            // Si on change de gare et qu'on était filtré, on remet tout d'abord
+            if(isFiltered) {
+                isFiltered = false;
+                reloadGlobalData();
+            }
+
+            const lat = gare.position_geographique.lat;
+            const lon = gare.position_geographique.lon;
+            const center = turf.point([lon, lat]);
+
+            document.getElementById('tab-global').style.display = 'none';
+            document.getElementById('tab-pepites').style.display = 'none';
+            document.getElementById('view-detail').style.display = 'block';
+            document.getElementById('route-panel').classList.add('hidden');
+            document.getElementById('route-placeholder').classList.remove('hidden');
+            document.getElementById('btn-reset-filter').classList.add('hidden');
+            
+            document.getElementById('d-nom').innerText = gare.nom;
+            document.getElementById('d-seg').innerText = "Segment " + (gare.segment_drg || '?');
+            if(gare.tourismScore && gare.tourismScore > 5) document.getElementById('d-score').classList.remove('hidden');
+            else document.getElementById('d-score').classList.add('hidden');
+
+            map.flyTo([lat, lon], 12); 
+            layers.circles.clearLayers();
+            layers.route.clearLayers();
+            layers.velo.clearLayers();
+
+            L.circle([lat, lon], { radius: 5000, color: '#10b981', weight: 1, fill: true, fillOpacity: 0.05, interactive: false }).addTo(layers.circles);
+            L.circle([lat, lon], { radius: 15000, color: '#f59e0b', weight: 1, fill: false, dashArray: '8,8', interactive: false }).addTo(layers.circles);
+
+            let epvCount = 0, qualiteCount = 0, toursCount = 0, kmVelo = 0;
+            let types = {};
+            let distances = [];
+            
+            currentLocalData = { epv: [], qualite: [], tours: [] };
+
+            if(DB.velo) {
+                const feats = [];
+                DB.velo.features.forEach(f => {
+                    try {
+                        const coords = f.geometry.coordinates;
+                        const first = Array.isArray(coords[0][0]) ? coords[0][0] : coords[0];
+                        if(turf.distance(center, turf.point(first)) < 8) {
+                            feats.push(f);
+                            kmVelo += turf.length(f);
+                        }
+                    } catch(e){}
+                });
+                if(feats.length) layers.velo.addData({type:"FeatureCollection", features:feats});
+            }
+            document.getElementById('d-velo-km').innerText = kmVelo.toFixed(1) + " km";
+
+            const analyzeList = (list, getPos, typeName, isTour=false) => {
+                list.forEach(item => {
+                    const c = getPos(item);
+                    if(c) {
+                        const dist = turf.distance(center, turf.point([c[1], c[0]]));
+                        if(dist < 15) {
+                            if(isTour) { toursCount++; currentLocalData.tours.push(item); }
+                            else if (typeName === 'EPV') { epvCount++; currentLocalData.epv.push(item); }
+                            else { qualiteCount++; currentLocalData.qualite.push(item); }
+                            
+                            const t = isTour ? 'Randonnée' : (item.univers || item.activite_du_professionnel || 'Autre');
+                            types[t] = (types[t] || 0) + 1;
+                            
+                            distances.push(dist);
+                        }
+                    }
+                });
+            };
+
+            analyzeList(DB.epv, getCoord, 'EPV');
+            analyzeList(DB.qualite, getCoord, 'Qualité');
+            DB.tours.forEach(t => {
+                const tObj = { coordonnees_geographiques: { lat: t.Latitude, lon: t.Longitude }, ...t };
+                analyzeList([tObj], getCoord, 'Tour', true);
+            });
+
+            // zoom = point restent
+
+            const statsDiv = document.getElementById('stats-panel');
+            if(distances.length > 0) {
+                const med = math.median(distances);
+                const std = math.std(distances);
+                document.getElementById('stat-median').innerText = med.toFixed(1);
+                document.getElementById('stat-std').innerText = std.toFixed(1);
+                statsDiv.classList.remove('hidden');
+            } else {
+                statsDiv.classList.add('hidden');
+            }
+
+            updateLocalCharts(epvCount, qualiteCount, toursCount, types);
+            fetchSNCF(gare.codes_uic);
+        }
+
+        async function calculateRouteReal(destData) {
+            if(!activeGare) return;
+            const start = [activeGare.position_geographique.lon, activeGare.position_geographique.lat];
+            const end = [destData.lon, destData.lat];
+
+            document.getElementById('route-placeholder').classList.add('hidden');
+            const panel = document.getElementById('route-panel');
+            panel.classList.remove('hidden');
+            document.getElementById('route-dest').innerText = "Calcul OSRM en cours...";
+
+            try {
+                const url = `https://router.project-osrm.org/route/v1/bike/${start.join(',')};${end.join(',')}?overview=full&geometries=geojson`;
+                const res = await fetch(url);
+                const json = await res.json();
+
+                if(json.routes && json.routes.length > 0) {
+                    const route = json.routes[0];
+                    layers.route.clearLayers();
+                    const routeLine = L.geoJSON(route.geometry, { style: { color: '#3b82f6', weight: 6, opacity: 0.8 } }).addTo(layers.route);
+                    map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+
+                    const distKm = route.distance / 1000;
+                    const durationMin = route.duration / 60; 
+
+                    document.getElementById('route-dest').innerText = destData.name;
+                    document.getElementById('route-dist').innerText = distKm.toFixed(1) + " km";
+                    document.getElementById('time-velo').innerText = formatTime(Math.round(durationMin)); 
+                } else {
+                    throw new Error("Route not found");
+                }
+            } catch(e) {
+                document.getElementById('route-dest').innerText = destData.name + " (Vol d'oiseau)";
+                layers.route.clearLayers();
+                const line = L.polyline([[start[1], start[0]], [end[1], end[0]]], { color: 'red', dashArray: '10, 10' }).addTo(layers.route);
+                map.fitBounds(line.getBounds(), { padding: [50, 50] });
+                
+                const distDirect = turf.distance(turf.point(start), turf.point(end));
+                document.getElementById('route-dist').innerText = distDirect.toFixed(1) + " km";
+                document.getElementById('time-velo').innerText = "--"; 
+            }
+        }
+
+        function formatTime(min) {
+            if(min > 60) {
+                const h = Math.floor(min / 60);
+                const m = min % 60;
+                return `${h}h${m < 10 ? '0'+m : m}`;
+            }
+            return min + " min";
+        }
+
+        function resetView() {
+            if(activeGare) map.closePopup();
+            layers.circles.clearLayers();
+            layers.route.clearLayers();
+            layers.velo.clearLayers();
+        }
+
+        function initGlobalCharts() {
+            const cg = {A:0, B:0, C:0};
+            DB.gares.forEach(g => { if(g.segment_drg && cg[g.segment_drg] !== undefined) cg[g.segment_drg]++ });
+            
+            charts.globalGares = new Chart(document.getElementById('chartGlobalGares'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Hub (A)', 'Régional (B)', 'Local (C)'],
+                    datasets: [{ data: [cg.A, cg.B, cg.C], backgroundColor: ['#2563eb', '#60a5fa', '#10b981'] }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+            });
+
+            const reg = {};
+            DB.epv.forEach(e => { const r = e.region || '?'; reg[r] = (reg[r]||0)+1 });
+            const sorted = Object.entries(reg).sort((a,b)=>b[1]-a[1]).slice(0,5);
+            
+            charts.globalReg = new Chart(document.getElementById('chartGlobalRegions'), {
+                type: 'bar',
+                data: {
+                    labels: sorted.map(x=>x[0]),
+                    datasets: [{ label: 'Sites', data: sorted.map(x=>x[1]), backgroundColor: '#f59e0b', borderRadius: 4 }]
+                },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display:false } }, y: { grid: { display:false } } } }
+            });
+        }
+
+        function updateLocalCharts(epv, qualite, tours, types) {
+            if(charts.localPie) charts.localPie.destroy();
+            charts.localPie = new Chart(document.getElementById('chartLocalPie'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Savoir-faire', 'Qualité', 'Nature/Rando'],
+                    datasets: [{ data: [epv, qualite, tours], backgroundColor: ['#f59e0b', '#ef4444', '#d946ef'], borderWidth: 0 }]
+                },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    plugins: { legend: { position: 'right' } }, 
+                    cutout: '60%',
+                    onClick: (evt, activeElements) => {
+                        if (activeElements.length > 0) {
+                            const index = activeElements[0].index;
+                            drillDownChart(index);
+                        }
+                    }
+                }
+            });
+
+            if(charts.localBar) charts.localBar.destroy();
+            const topTypes = Object.entries(types).sort((a,b)=>b[1]-a[1]).slice(0,4);
+            drawBarChart(
+                topTypes.map(x=>x[0].substring(0,15)), 
+                topTypes.map(x=>x[1]), 
+                '#64748b'
+            );
+        }
+
+        function drillDownChart(index) {
+            let labels = [], data = [], color = '#64748b', title = "";
+
+            if (index === 0) { 
+                title = "Types de Savoir-Faire";
+                color = '#f59e0b';
+                const count = {};
+                currentLocalData.epv.forEach(e => {
+                    const u = e.univers || 'Autre';
+                    count[u] = (count[u] || 0) + 1;
+                });
+                const sorted = Object.entries(count).sort((a,b) => b[1]-a[1]).slice(0,5);
+                labels = sorted.map(s => s[0]);
+                data = sorted.map(s => s[1]);
+
+            } else if (index === 2) { 
+                title = "Ratio Pédestre / Cyclo";
+                color = '#d946ef';
+                let foot = 0, bike = 0;
+                currentLocalData.tours.forEach(t => {
+                    const desc = (t.Description || "").toLowerCase();
+                    if (desc.includes('vélo') || desc.includes('cycl') || desc.includes('vtt')) bike++;
+                    else foot++;
+                });
+                labels = ['Pédestre', 'Vélo/VTT'];
+                data = [foot, bike];
+            } else {
+                title = "Labels Qualité";
+                color = '#ef4444';
+                const count = {};
+                currentLocalData.qualite.forEach(q => {
+                    const a = q.activite_du_professionnel || 'Autre';
+                    count[a] = (count[a] || 0) + 1;
+                });
+                const sorted = Object.entries(count).sort((a,b) => b[1]-a[1]).slice(0,5);
+                labels = sorted.map(s => s[0]);
+                data = sorted.map(s => s[1]);
+            }
+
+            document.getElementById('bar-title').innerText = title;
+            drawBarChart(labels, data, color);
+        }
+
+        function drawBarChart(labels, data, color) {
+            if(charts.localBar) charts.localBar.destroy();
+            charts.localBar = new Chart(document.getElementById('chartLocalBar'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{ label: 'Sites', data: data, backgroundColor: color, borderRadius: 4 }]
+                },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    plugins: { legend: { display: false } }, 
+                    scales: { 
+                        x: { display: true, ticks: { font: {size: 10} } }, 
+                        y: { display:false } 
+                    },
+                    onClick: (evt, activeElements) => {
+                        if (activeElements.length > 0) {
+                            const index = activeElements[0].index;
+                            const categoryLabel = labels[index]; 
+                            filterMapByCategory(categoryLabel, color);
+                        }
+                    },
+                    onHover: (event, chartElement) => {
+                        event.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default';
+                    }
+                }
+            });
+        }
+
+        function filterMapByCategory(label, color) {
+            isFiltered = true; // On passe en mode filtré
+            
+            layers.epv.clearLayers();
+            layers.qualite.clearLayers();
+            layers.tours.clearLayers();
+
+            let count = 0;
+
+            if(color === '#f59e0b') { 
+                currentLocalData.epv.forEach(e => {
+                    const univers = e.univers || 'Autre';
+                    if(univers === label) {
+                        addPoint(e, '#f59e0b', 'EPV', e.raison_sociale, e.univers, layers.epv);
+                        count++;
+                    }
+                });
+            }
+            else if(color === '#ef4444') { 
+                currentLocalData.qualite.forEach(q => {
+                    const activite = q.activite_du_professionnel || 'Autre';
+                    if(activite === label) {
+                        addPoint(q, '#ef4444', 'Qualité Tourisme', q.nom_du_professionnel, q.activite_du_professionnel, layers.qualite);
+                        count++;
+                    }
+                });
+            }
+            else if(color === '#d946ef') { 
+                currentLocalData.tours.forEach(t => {
+                    const desc = (t.Description || "").toLowerCase();
+                    const isBike = desc.includes('vélo') || desc.includes('cycl') || desc.includes('vtt');
+                    
+                    if( (label === 'Vélo/VTT' && isBike) || (label === 'Pédestre' && !isBike) ) {
+                        const pointObj = { coordonnees_geographiques: { lat: t.Latitude, lon: t.Longitude } };
+                        addPoint(pointObj, '#d946ef', 'Balade', t.Nom_du_POI, t.Description.substring(0, 100) + "...", layers.tours);
+                        count++;
+                    }
+                });
+            }
+
+            document.getElementById('btn-reset-filter').classList.remove('hidden');
+            showToast(`Carte filtrée : ${count} résultats pour "${label}"`);
+        }
+
+        function resetLocalFilter() {
+            isFiltered = false;
+            // On recharge tout le monde (global) car l'utilisateur veut surement dézoomer après
+            reloadGlobalData();
+            document.getElementById('btn-reset-filter').classList.add('hidden');
+            showToast("Filtre réinitialisé : Tous les sites affichés");
+        }
+
+        async function fetchSNCF(uicFull) {
+            const ul = document.getElementById('d-api-list');
+            ul.innerHTML = '<li class="text-gray-400"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Interrogation SNCF...</li>';
+            if(!uicFull) { ul.innerHTML = '<li>Code manquant</li>'; return; }
+            const uic = uicFull.split(';')[0];
+            try {
+                const r = await fetch(`https://api.sncf.com/v1/coverage/sncf/stop_areas/stop_area:SNCF:${uic}/departures?count=3`, { headers: { Authorization: SNCF_KEY } });
+                const d = await r.json();
+                if(d.departures) {
+                    ul.innerHTML = d.departures.map(t => {
+                        const time = t.stop_date_time.departure_date_time.slice(9,11)+'h'+t.stop_date_time.departure_date_time.slice(11,13);
+                        return `<li class="flex justify-between items-center border-b border-gray-100 pb-2">
+                            <span class="font-bold text-slate-700">${t.display_informations.direction.split('(')[0]}</span>
+                            <span class="font-bold text-blue-600 bg-blue-100 px-3 py-1 rounded-full text-xs">${time}</span>
+                        </li>`;
+                    }).join('');
+                } else { ul.innerHTML = '<li>Aucun départ trouvé</li>'; }
+            } catch(e) { ul.innerHTML = '<li class="text-red-400">Erreur API SNCF</li>'; }
+        }
+
+        function getCoord(obj) {
+            if(obj.coordonnees_geographiques?.lat) return [obj.coordonnees_geographiques.lat, obj.coordonnees_geographiques.lon];
+            if(obj.geolocetablissement?.lat) return [obj.geolocetablissement.lat, obj.geolocetablissement.lon];
+            if(Array.isArray(obj.geolocetablissement)) return obj.geolocetablissement;
+            if(obj.latitude && obj.longitude) return [obj.latitude, obj.longitude];
+            return null;
+        }
+
+        function openContext() { document.getElementById('modal-context').style.display = 'flex'; }
+        function closeContext() { document.getElementById('modal-context').style.display = 'none'; }
+
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
