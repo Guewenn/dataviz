@@ -14,9 +14,6 @@ Ce projet explore l'intermodalité (Train + Vélo) en croisant les données ouve
 
 👉 **[Voir le projet en ligne](https://guewenn.mennegaut.mmi-velizy.fr/Dataviz/)**
 
-![Capture d'écran du projet](https://via.placeholder.com/1000x500?text=Inserer+une+capture+d'ecran+ici)
-*(Pense à remplacer ce lien par une vraie capture d'écran de ton projet)*
-
 ---
 
 ## ✨ Fonctionnalités Clés
