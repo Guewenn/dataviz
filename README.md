@@ -12,7 +12,7 @@ Ce projet explore l'intermodalité (Train + Vélo) en croisant les données ouve
 
 ## 🌍 Démonstration
 
-👉 **[Voir le projet en ligne](https://guewenn.mennegaut.mmi-velizy.fr/Dataviz/)**
+👉 **[Voir le projet en ligne](https://guewenn.mennegaut.mmi-velizy.fr/Dataviz2/)**
 
 ---
 
